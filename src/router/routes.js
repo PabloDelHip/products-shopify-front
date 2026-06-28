@@ -250,4 +250,10 @@ export default [
     meta: { title: "Reportes", authRequired: true },
     component: () => import("../views/reportes/index"),
   },
+  {
+    path: "/users",
+    name: "Usuarios",
+    meta: { title: "Usuarios", authRequired: true },
+    component: () => import("../views/users/index"),
+  },
 ];

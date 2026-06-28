@@ -22,6 +22,7 @@ export default {
       perPage: 20,
       // UI state
       selectedProductIds: [],
+      productPercentages: {},
       loadingCategories: false,
       loadingProducts: false,
       syncingBulk: false,
@@ -289,7 +290,7 @@ export default {
               model: p.modelo || "",
               sku: p.modelo || p.sku || "",
               price:
-                p.precios?.precio_especial ||
+                p.precios?.precio_descuento ||
                 p.precios?.precio_lista ||
                 p.precio ||
                 0,
@@ -342,7 +343,7 @@ export default {
       });
     },
 
-    mapProductToShopify(p) {
+    mapProductToShopify(p, pricePercentage) {
       // Tags normalization
       let tags = [
         "syscom",
@@ -383,9 +384,10 @@ export default {
       return {
         external_id: String(p.id),
         provider: "syscom",
+        price_percentage: parseFloat(pricePercentage) || 0,
         title: p.name,
         vendor: p.brand || "Generico",
-        product_type: String(this.selectedCategoryId), // Using ID as per user feedback earlier or category name? User example had product_type as string ID "65821"
+        product_type: String(this.selectedCategoryId),
         description_html: `<p>${p.name}. Marca: ${p.brand}. Modelo: ${p.model}.</p>`,
         status: "ACTIVE",
         tags: tags,
@@ -410,7 +412,7 @@ export default {
           syscom_link: p.raw?.link || "",
           syscom_total_existencia: parseInt(p.stock) || 0,
           syscom_precio_lista: parseFloat(p.compare_at_price || p.price),
-          syscom_precio_especial: parseFloat(p.price),
+          syscom_precio_descuento: parseFloat(p.price),
           syscom_caracteristicas: p.raw?.caracteristicas || [],
           syscom_recursos: p.raw?.recursos || [],
         },
@@ -448,6 +450,28 @@ export default {
     async syncProduct(product) {
       if (product.isSyncing) return;
 
+      // Resolve percentage: use already-captured value or prompt the user
+      let percentage = this.productPercentages[product.id];
+      if (percentage === null || percentage === undefined || percentage === "") {
+        const { value, isConfirmed } = await Swal.fire({
+          title: "Porcentaje de precio",
+          input: "number",
+          inputLabel: `Ingresa el % de precio para "${product.name}"`,
+          inputPlaceholder: "Ej: 15",
+          inputAttributes: { min: 0, step: 0.1 },
+          showCancelButton: true,
+          confirmButtonText: "Continuar",
+          cancelButtonText: "Cancelar",
+          inputValidator: (v) => {
+            if (v === "" || v === null || v === undefined)
+              return "El porcentaje es obligatorio";
+          },
+        });
+        if (!isConfirmed) return;
+        percentage = parseFloat(value);
+        this.productPercentages[product.id] = percentage;
+      }
+
       product.isSyncing = true;
       Swal.fire({
         title: "Subiendo producto...",
@@ -462,7 +486,7 @@ export default {
         const detail = await syscomService.getProductDetail(product.id);
         product.raw = { ...product.raw, ...detail };
 
-        const payload = this.mapProductToShopify(product);
+        const payload = this.mapProductToShopify(product, percentage);
         await localApiService.syncProducts([payload]);
 
         // Trigger Shopify processing for this single product
@@ -502,6 +526,21 @@ export default {
           "Los productos seleccionados ya están sincronizados.",
           "info"
         );
+        return;
+      }
+
+      // Validate that every product has a percentage set
+      const missingPercentage = productsToSync.filter((p) => {
+        const pct = this.productPercentages[p.id];
+        return pct === null || pct === undefined || pct === "";
+      });
+      if (missingPercentage.length > 0) {
+        Swal.fire({
+          icon: "warning",
+          title: "Porcentaje requerido",
+          html: `Los siguientes productos no tienen porcentaje de precio:<br><br><strong>${missingPercentage.map((p) => p.name).join("<br>")}</strong>`,
+          confirmButtonColor: "#556ee6",
+        });
         return;
       }
 
@@ -565,10 +604,10 @@ export default {
           try {
             const detail = await syscomService.getProductDetail(p.id);
             p.raw = { ...p.raw, ...detail };
-            payloads.push(this.mapProductToShopify(p));
+            payloads.push(this.mapProductToShopify(p, this.productPercentages[p.id]));
           } catch (e) {
             console.warn(`Detail fetch failed for ${p.id}`, e);
-            payloads.push(this.mapProductToShopify(p));
+            payloads.push(this.mapProductToShopify(p, this.productPercentages[p.id]));
           }
         }
 
@@ -780,6 +819,35 @@ export default {
         this.syncingBulk = false;
       }
     },
+    async deleteProduct(product) {
+      const result = await Swal.fire({
+        title: "¿Eliminar producto?",
+        html: `¿Estás seguro de que deseas eliminar <strong>${product.name}</strong>? Esta acción no se puede deshacer.`,
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonColor: "#f46a6a",
+        cancelButtonColor: "#74788d",
+        confirmButtonText: "Sí, eliminar",
+        cancelButtonText: "Cancelar",
+      });
+
+      if (!result.isConfirmed) return;
+
+      try {
+        await localApiService.deleteProduct("syscom", product.id);
+        this.products = this.products.filter((p) => p.id !== product.id);
+        Swal.fire({
+          icon: "success",
+          title: "Eliminado",
+          text: "El producto fue eliminado correctamente.",
+          timer: 1500,
+          showConfirmButton: false,
+        });
+      } catch (error) {
+        console.error("Error eliminando producto:", error);
+        Swal.fire("Error", "No se pudo eliminar el producto.", "error");
+      }
+    },
   },
   watch: {
     searchQuery() {
@@ -787,6 +855,13 @@ export default {
     },
     statusFilter() {
       this.selectedProductIds = [];
+    },
+    selectedProductIds(newIds) {
+      newIds.forEach((id) => {
+        if (this.productPercentages[id] === undefined) {
+          this.productPercentages[id] = null;
+        }
+      });
     },
     sourceFilter() {
       this.currentPage = 1;
@@ -949,6 +1024,7 @@ export default {
                       <th>Producto</th>
                       <th>Marca / Modelo</th>
                       <th>Precio</th>
+                      <th style="min-width: 120px">% Precio</th>
                       <th style="min-width: 140px">Stock (Local / Syscom)</th>
                       <th>Última Sinc.</th>
                       <th>Acciones</th>
@@ -1022,6 +1098,31 @@ export default {
                       </td>
                       <td class="fw-medium">
                         ${{ Number(product.price).toLocaleString("es-MX") }}
+                      </td>
+                      <td>
+                        <div
+                          v-if="selectedProductIds.includes(product.id)"
+                          class="input-group input-group-sm"
+                          style="max-width: 105px"
+                        >
+                          <input
+                            type="number"
+                            class="form-control form-control-sm"
+                            :class="{
+                              'is-invalid':
+                                selectedProductIds.includes(product.id) &&
+                                (productPercentages[product.id] === null ||
+                                  productPercentages[product.id] === undefined ||
+                                  productPercentages[product.id] === ''),
+                            }"
+                            placeholder="0"
+                            min="0"
+                            step="0.1"
+                            v-model.number="productPercentages[product.id]"
+                          />
+                          <span class="input-group-text">%</span>
+                        </div>
+                        <span v-else class="text-muted font-size-12">—</span>
                       </td>
                       <td>
                         <div class="d-flex flex-column gap-1">
@@ -1100,13 +1201,21 @@ export default {
                               "
                             ></i>
                           </button>
+                          <button
+                            v-if="sourceFilter === 'local'"
+                            class="btn btn-soft-danger btn-sm"
+                            @click="deleteProduct(product)"
+                            title="Eliminar producto sincronizado"
+                          >
+                            <i class="bx bx-trash"></i>
+                          </button>
                         </div>
                       </td>
                     </tr>
                     <tr
                       v-if="paginatedProducts.length === 0 && !loadingProducts"
                     >
-                      <td colspan="7" class="text-center py-5">
+                      <td colspan="8" class="text-center py-5">
                         <i
                           class="bx bx-package font-size-36 text-muted mb-2"
                         ></i>

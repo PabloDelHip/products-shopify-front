@@ -22,4 +22,10 @@ export const menuItems = [
     icon: "bx-bar-chart-alt-2",
     link: "/reportes",
   },
+  {
+    id: 5,
+    label: "Usuarios",
+    icon: "bx-user",
+    link: "/users",
+  },
 ];

@@ -14,9 +14,18 @@ class SyscomService {
 
   async authenticate() {
     try {
+      console.log("Authenticating with Syscom via Backend...");
+      console.log("LOCAL_API_URL", LOCAL_API_URL);
+      console.log("SYSCOM_AUTH_URL", SYSCOM_AUTH_URL);
+      console.log("SYSCOM_API_URL", SYSCOM_API_URL);
+      console.log("clientId", this.clientId);
+      console.log("clientSecret", this.clientSecret);
+      console.log("token", this.token);
       // Obtenemos el token de tu usuario para autorizar la petición al backend
       const user = JSON.parse(localStorage.getItem("user"));
       const localToken = user ? user.token : null;
+      console.log("user", user);
+      console.log("localToken", localToken);
 
       const params = new URLSearchParams();
       params.append("client_id", this.clientId);

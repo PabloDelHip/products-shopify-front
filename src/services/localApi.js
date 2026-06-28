@@ -175,6 +175,38 @@ class LocalApiService {
     }
   }
 
+  async getUsers(page = 1) {
+    const client = this.getApiClient();
+    const response = await client.get("/users", { params: { page } });
+    return response.data;
+  }
+
+  async createUser(data) {
+    const client = this.getApiClient();
+    const response = await client.post("/users", data);
+    return response.data;
+  }
+
+  async updateUser(id, data) {
+    const client = this.getApiClient();
+    const response = await client.put(`/users/${id}`, data);
+    return response.data;
+  }
+
+  async deleteUser(id) {
+    const client = this.getApiClient();
+    const response = await client.delete(`/users/${id}`);
+    return response.data;
+  }
+
+  async deleteProduct(provider, externalId) {
+    const client = this.getApiClient();
+    const response = await client.delete(
+      `/shopify/products/${provider}/${externalId}`
+    );
+    return response.data;
+  }
+
   async getShopifyUploadsReport(params = {}) {
     try {
       const client = this.getApiClient();
