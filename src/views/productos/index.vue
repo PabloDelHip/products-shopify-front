@@ -203,6 +203,7 @@ export default {
                 isSyncing: false,
                 isSynced: true,
                 lastSyncedAt: item.last_synced_at,
+                pricePercentage: item.price_percentage ?? null,
                 raw: item,
               };
             });
@@ -450,20 +451,27 @@ export default {
     async syncProduct(product) {
       if (product.isSyncing) return;
 
-      // Resolve percentage: use already-captured value or prompt the user
+      // Si no se capturó desde el front (checkbox), pre-llenar con valor del backend si existe
+      if (this.productPercentages[product.id] === undefined) {
+        this.productPercentages[product.id] = product.pricePercentage ?? null;
+      }
+
       let percentage = this.productPercentages[product.id];
-      if (percentage === null || percentage === undefined || percentage === "") {
+      const hasValidPercentage = Number.isFinite(percentage) && percentage !== null;
+
+      if (!hasValidPercentage) {
         const { value, isConfirmed } = await Swal.fire({
           title: "Porcentaje de precio",
           input: "number",
           inputLabel: `Ingresa el % de precio para "${product.name}"`,
           inputPlaceholder: "Ej: 15",
+          inputValue: product.pricePercentage ?? "",
           inputAttributes: { min: 0, step: 0.1 },
           showCancelButton: true,
           confirmButtonText: "Continuar",
           cancelButtonText: "Cancelar",
           inputValidator: (v) => {
-            if (v === "" || v === null || v === undefined)
+            if (v === "" || v === null || v === undefined || isNaN(parseFloat(v)))
               return "El porcentaje es obligatorio";
           },
         });
@@ -529,19 +537,60 @@ export default {
         return;
       }
 
-      // Validate that every product has a percentage set
-      const missingPercentage = productsToSync.filter((p) => {
-        const pct = this.productPercentages[p.id];
-        return pct === null || pct === undefined || pct === "";
+      // Preguntar si se aplica un único porcentaje a todo el lote o si es por producto
+      const modeResult = await Swal.fire({
+        title: "Porcentaje de precio",
+        text: "¿Deseas aplicar el mismo porcentaje a todos los productos del lote?",
+        icon: "question",
+        showDenyButton: true,
+        showCancelButton: true,
+        confirmButtonColor: "#34c38f",
+        denyButtonColor: "#556ee6",
+        cancelButtonColor: "#f46a6a",
+        confirmButtonText: "Sí, mismo % para todos",
+        denyButtonText: "No, por producto",
+        cancelButtonText: "Cancelar",
       });
-      if (missingPercentage.length > 0) {
-        Swal.fire({
-          icon: "warning",
-          title: "Porcentaje requerido",
-          html: `Los siguientes productos no tienen porcentaje de precio:<br><br><strong>${missingPercentage.map((p) => p.name).join("<br>")}</strong>`,
-          confirmButtonColor: "#556ee6",
+
+      if (modeResult.dismiss === Swal.DismissReason.cancel) return;
+
+      if (modeResult.isConfirmed) {
+        // Mismo porcentaje para todo el lote
+        const { value, isConfirmed } = await Swal.fire({
+          title: "Porcentaje para todo el lote",
+          input: "number",
+          inputLabel: `Ingresa el % de precio para los ${productsToSync.length} productos seleccionados`,
+          inputPlaceholder: "Ej: 15",
+          inputAttributes: { min: 0, step: 0.1 },
+          showCancelButton: true,
+          confirmButtonText: "Continuar",
+          cancelButtonText: "Cancelar",
+          inputValidator: (v) => {
+            if (v === "" || v === null || v === undefined || isNaN(parseFloat(v)))
+              return "El porcentaje es obligatorio";
+          },
         });
-        return;
+        if (!isConfirmed) return;
+
+        const pct = parseFloat(value);
+        productsToSync.forEach((p) => {
+          this.productPercentages[p.id] = pct;
+        });
+      } else {
+        // Por producto: se mantiene el flujo existente de validación
+        const missingPercentage = productsToSync.filter((p) => {
+          const pct = this.productPercentages[p.id];
+          return pct === null || pct === undefined || pct === "";
+        });
+        if (missingPercentage.length > 0) {
+          Swal.fire({
+            icon: "warning",
+            title: "Porcentaje requerido",
+            html: `Los siguientes productos no tienen porcentaje de precio:<br><br><strong>${missingPercentage.map((p) => p.name).join("<br>")}</strong>`,
+            confirmButtonColor: "#556ee6",
+          });
+          return;
+        }
       }
 
       const result = await Swal.fire({
@@ -859,7 +908,9 @@ export default {
     selectedProductIds(newIds) {
       newIds.forEach((id) => {
         if (this.productPercentages[id] === undefined) {
-          this.productPercentages[id] = null;
+          const product = this.products.find((p) => p.id === id);
+          this.productPercentages[id] =
+            product?.pricePercentage ?? null;
         }
       });
     },
